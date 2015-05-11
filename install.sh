@@ -22,13 +22,15 @@ else
 fi
 
 VERSION=1
-NODE_VERSION=v0.10.3
+NODE_VERSION=v0.12.2
 C9_DIR=$HOME/.c9
 NPM=$C9_DIR/node/bin/npm
 NODE=$C9_DIR/node/bin/node
 
 export TMP=$C9_DIR/tmp
 export TMPDIR=$TMP
+
+PYTHON=python
 
 start() {
   if [ $# -lt 1 ]; then
@@ -64,17 +66,7 @@ start() {
     echo "Unsupported Architecture: $os $arch" 1>&2
     exit 1
   fi
-  
-  if [ `ls -la ~ | grep .npm$ | awk '{ print $3 }'` = "root" ] && [ `id -u` != 0 ]; then
-    echo "~/.npm is owned by root. Please chown to your user and try again."
-    exit 1
-  fi
-  
-  if [ `python -c 'import gyp; print gyp.__file__' 2> /dev/null` ]; then
-  	echo "You have a global gyp installed. Please run 'sudo apt-get remove gyp'"
-  	exit 100
-  fi
-  
+    
   case $1 in
     "help" )
       echo
@@ -109,10 +101,10 @@ start() {
       shift
     
       # make sure dirs are around
-      mkdir -p $C9_DIR/bin
-      mkdir -p $C9_DIR/tmp
-      mkdir -p $C9_DIR/node_modules
-      cd $C9_DIR
+      mkdir -p "$C9_DIR"/bin
+      mkdir -p "$C9_DIR"/tmp
+      mkdir -p "$C9_DIR"/node_modules
+      cd "$C9_DIR"
     
       # install packages
       while [ $# -ne 0 ]
@@ -127,8 +119,8 @@ start() {
       done
       
       # finalize
-      pushd $C9_DIR/node_modules/.bin
-      for FILE in $C9_DIR/node_modules/.bin/*; do
+      pushd "$C9_DIR"/node_modules/.bin
+      for FILE in "$C9_DIR"/node_modules/.bin/*; do
         if [ `uname` == Darwin ]; then
           sed -i "" -E s:'#!/usr/bin/env node':"#!$NODE":g $(readlink $FILE)
         else
@@ -137,7 +129,7 @@ start() {
       done
       popd
       
-      echo $VERSION > $HOME/.c9/installed
+      echo $VERSION > "$C9_DIR"/installed
       echo :Done.
     ;;
     
@@ -153,18 +145,88 @@ start() {
 }
 
 check_deps() {
+  local ERR
+  local OS
+  
+  if [[ `cat /etc/issue 2>/dev/null` =~ CentOS ]]; then
+    OS="CentOS"
+  elif [[ `cat /proc/version 2>/dev/null` =~ Ubuntu|Debian ]]; then
+    OS="DEBIAN"
+  fi
+
   for DEP in make gcc; do
     if ! has $DEP; then
       echo "Error: please install $DEP to proceed" >&2
-      if [[ `cat /proc/version 2>/dev/null` =~ Ubuntu|Debian ]]; then
+      if [ "$OS" == "CentOS" ]; then
+        echo "To do so, log into your machine and type 'yum groupinstall -y development'" >&2
+      elif [ "$OS" == "DEBIAN" ]; then
         echo "To do so, log into your machine and type 'sudo apt-get install build-essential'" >&2
       fi
-      exit 1
+      ERR=1
     fi
   done
+  
+  # CentOS
+  if [ "$OS" == "CentOS" ]; then
+    if ! yum list installed glibc-static >/dev/null 2>&1; then
+      echo "Error: please install glibc-static to proceed" >&2
+      echo "To do so, log into your machine and type 'yum install glibc-static'" >&2
+      ERR=1
+    fi
+  fi
+  
+  check_python
+  
+  if [ "$ERR" ]; then exit 1; fi
+}
+
+check_python() {
+  if which python2.7 &> /dev/null; then
+    PYTHONVERSION="2.7"
+    PYTHON="python2.7"
+  else
+    PYTHONVERSION=`python --version 2>&1`
+    PYTHON=python
+  fi
+  
+  if [[ $PYTHONVERSION != *2.7* ]]; then
+    echo "Python version 2.7 is required to install pty.js. Please install python 2.7 and try again. You can find more information on how to install Python in the docs: https://docs.c9.io/ssh_workspaces.html"
+    exit 100
+  fi
 }
 
 # NodeJS
+
+downlaod_virtualenv() {
+  VIRTUALENV_VERSION="virtualenv-12.0.7"
+  $DOWNLOAD "https://pypi.python.org/packages/source/v/virtualenv/$VIRTUALENV_VERSION.tar.gz"
+  tar xzf $VIRTUALENV_VERSION.tar.gz
+  rm $VIRTUALENV_VERSION.tar.gz
+  mv $VIRTUALENV_VERSION virtualenv
+}
+
+ensure_local_gyp() {
+  # when gyp is installed globally npm install pty.js won't work
+  # to test this use `sudo apt-get install gyp`
+  if [ `"$PYTHON" -c 'import gyp; print gyp.__file__' 2> /dev/null` ]; then
+    echo "You have a global gyp installed. Setting up VirtualEnv without global pakages"
+    rm -rf virtualenv
+    rm -rf python
+    if has virtualenv; then
+      virtualenv -p python2 "$C9_DIR/python"
+    else
+      downlaod_virtualenv
+      "$PYTHON" virtualenv/virtualenv.py "$C9_DIR/python"
+    fi
+    if [[ -f "$C9_DIR/python/bin/python2" ]]; then
+      PYTHON="$C9_DIR/python/bin/python2"
+    else
+      echo "Unable to setup virtualenv"
+      exit 1
+    fi
+  fi
+  "$NPM" config -g set python "$PYTHON"
+}
 
 node(){
   # clean up 
@@ -173,16 +235,24 @@ node(){
   
   echo :Installing Node $NODE_VERSION
   
-  $DOWNLOAD http://nodejs.org/dist/$NODE_VERSION/node-$NODE_VERSION-$1-$2.tar.gz
-  tar xvfz node-$NODE_VERSION-$1-$2.tar.gz
+  $DOWNLOAD https://nodejs.org/dist/$NODE_VERSION/node-$NODE_VERSION-$1-$2.tar.gz
+  tar xzf node-$NODE_VERSION-$1-$2.tar.gz
   mv node-$NODE_VERSION-$1-$2 node
   rm node-$NODE_VERSION-$1-$2.tar.gz
+
+  # use local npm cache
+  "$NPM" config -g set cache  "$C9_DIR/tmp/.npm"
+  # node-gyp uses sytem node or fails with command not found if
+  # we don't bump this node up in the path
+  PATH="$C9_DIR/node/bin/:$C9_DIR/node_modules/.bin:$PATH"
+  ensure_local_gyp
+
 }
 
 compile_tmux(){
   cd "$C9_DIR"
   echo ":Compiling libevent..."
-  tar xzvf libevent-2.0.21-stable.tar.gz
+  tar xzf libevent-2.0.21-stable.tar.gz
   rm libevent-2.0.21-stable.tar.gz
   cd libevent-2.0.21-stable
   echo ":Configuring Libevent"
@@ -194,11 +264,11 @@ compile_tmux(){
  
   cd "$C9_DIR"
   echo ":Compiling ncurses..."
-  tar xzvf ncurses-5.9.tar.gz
+  tar xzf ncurses-5.9.tar.gz
   rm ncurses-5.9.tar.gz
   cd ncurses-5.9
   echo ":Configuring Ncurses"
-  ./configure --prefix="$C9_DIR/local" --without-cxx
+  ./configure --prefix="$C9_DIR/local" --without-tests --without-cxx
   echo ":Compiling Ncurses"
   make
   echo ":Installing Ncurses"
@@ -206,7 +276,7 @@ compile_tmux(){
  
   cd "$C9_DIR"
   echo ":Compiling tmux..."
-  tar zxvf tmux-1.9.tar.gz
+  tar xzf tmux-1.9.tar.gz
   rm tmux-1.9.tar.gz
   cd tmux-1.9
   echo ":Configuring Tmux"
@@ -233,12 +303,12 @@ check_tmux_version(){
   if [ ! -x $1 ]; then
     return 1
   fi
-  tmux_version=$($1 -V | cut -d' ' -f2)  
+  tmux_version=$($1 -V | sed -e's/[a-z ]//g')  
   if [ ! "$tmux_version" ]; then
     return 1
   fi
 
-  if [ $(python -c "ok = 1 if 1.7<=$tmux_version else 0; print ok") -eq 1 ]; then
+  if [ $("$PYTHON" -c "print 1.7<=$tmux_version") == "True" ]; then
     return 0
   else
     return 1
@@ -253,7 +323,7 @@ tmux_install(){
     echo ':Existing tmux version is up-to-date'
   
   # If we can support tmux 1.9 or detect upgrades, the following would work:
-  elif has "tmux" && check_tmux_version tmux; then
+  elif has "tmux" && check_tmux_version `which tmux`; then
     echo ':A good version of tmux was found, creating a symlink'
     ln -sf $(which tmux) "$C9_DIR"/bin/tmux
     return 0
@@ -280,7 +350,7 @@ tmux_install(){
     fi
   fi
   
-  if ! check_tmux_version $C9_DIR/bin/tmux; then
+  if ! check_tmux_version "$C9_DIR"/bin/tmux; then
     echo "Installed tmux does not appear to work:"
     exit 100
   fi
@@ -289,39 +359,32 @@ tmux_install(){
 vfsextend(){
   echo :Installing VFS extend
   $DOWNLOAD https://raw.githubusercontent.com/c9/install/master/packages/extend/c9-vfs-extend.tar.gz
-  tar xvfz c9-vfs-extend.tar.gz
+  tar xzf c9-vfs-extend.tar.gz
   rm c9-vfs-extend.tar.gz
 }
 
 collab(){
   echo :Installing Collab Dependencies
-  $NPM install sqlite3@2.1.18
-  $NPM install sequelize@2.0.0-beta.0
+  "$NPM" cache clean
+  "$NPM" install sqlite3@3.0.5
+  "$NPM" install sequelize@2.0.0-beta.0
   mkdir -p "$C9_DIR"/lib
   cd "$C9_DIR"/lib
   $DOWNLOAD https://raw.githubusercontent.com/c9/install/master/packages/sqlite3/linux/sqlite3.tar.gz
-  tar xvfz sqlite3.tar.gz
+  tar xzf sqlite3.tar.gz
   rm sqlite3.tar.gz
   ln -sf "$C9_DIR"/lib/sqlite3/sqlite3 "$C9_DIR"/bin/sqlite3
 }
 
 nak(){
   echo :Installing Nak
-  $NPM install https://github.com/c9/nak/tarball/c9
+  "$NPM" install https://github.com/c9/nak/tarball/c9
 }
 
 ptyjs(){
   echo :Installing pty.js
-  
-  PYTHONVERSION=`python --version 2>&1`
-  if [[ $PYTHONVERSION != *2.7* ]]; then
-    echo "Python version 2.7 is required to install pty.js. Please install python 2.7 and try again."
-    exit 100
-  fi
-
-  $NPM install node-gyp
-  PATH=$C9_DIR/node_modules/.bin:$PATH
-  $NPM install pty.js@0.2.3
+  "$NPM" install node-gyp
+  "$NPM" install pty.js@0.2.6
   
   HASPTY=`"$C9_DIR/node/bin/node" -e "console.log(require('pty.js'))" | grep createTerminal | wc -l`
   if [ $HASPTY -ne 1 ]; then
@@ -333,27 +396,27 @@ ptyjs(){
 
 coffee(){
   echo :Installing Coffee Script
-  $NPM install coffee
+  "$NPM" install coffee
 }
 
 less(){
   echo :Installing Less
-  $NPM install less
+  "$NPM" install less
 }
 
 sass(){
   echo :Installing Sass
-  $NPM install sass
+  "$NPM" install sass
 }
 
 typescript(){
   echo :Installing TypeScript
-  $NPM install typescript  
+  "$NPM" install typescript  
 }
 
 stylus(){
   echo :Installing Stylus
-  $NPM install stylus  
+  "$NPM" install stylus  
 }
 
 # go(){
@@ -373,3 +436,6 @@ stylus(){
 # }
 
 start $@
+
+# cleanup tmp files
+rm -rf "$C9_DIR/tmp"
