@@ -37,8 +37,6 @@ start() {
     start base
     return
   fi
-
-  check_deps
   
   # Try to figure out the os and arch for binary fetching
   local uname="$(uname -a)"
@@ -135,7 +133,7 @@ start() {
     
     "base" )
       echo "Installing base packages. Use --help for more options"
-      start install tmux_install nak ptyjs vfsextend collab
+      start install nak ptyjs vfsextend collab
     ;;
     
     * )
