@@ -228,27 +228,6 @@ ensure_local_gyp() {
   "$NPM" config -g set python "$PYTHON"
 }
 
-node(){
-  # clean up 
-  rm -rf node 
-  rm -rf node-$NODE_VERSION*
-  
-  echo :Installing Node $NODE_VERSION
-  
-  $DOWNLOAD https://nodejs.org/dist/$NODE_VERSION/node-$NODE_VERSION-$1-$2.tar.gz
-  tar xzf node-$NODE_VERSION-$1-$2.tar.gz
-  mv node-$NODE_VERSION-$1-$2 node
-  rm node-$NODE_VERSION-$1-$2.tar.gz
-
-  # use local npm cache
-  "$NPM" config -g set cache  "$C9_DIR/tmp/.npm"
-  # node-gyp uses sytem node or fails with command not found if
-  # we don't bump this node up in the path
-  PATH="$C9_DIR/node/bin/:$C9_DIR/node_modules/.bin:$PATH"
-  ensure_local_gyp
-
-}
-
 compile_tmux(){
   cd "$C9_DIR"
   echo ":Compiling libevent..."
@@ -357,7 +336,7 @@ tmux_install(){
 }
 
 vfsextend(){
-  echo :Installing VFS extend
+  echo :Installing VFS extendn
   $DOWNLOAD https://raw.githubusercontent.com/c9/install/master/packages/extend/c9-vfs-extend.tar.gz
   tar xzf c9-vfs-extend.tar.gz
   rm c9-vfs-extend.tar.gz
