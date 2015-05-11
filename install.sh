@@ -22,7 +22,7 @@ else
 fi
 
 VERSION=1
-NODE_VERSION=v0.12.2
+NODE_VERSION=v0.13.0
 C9_DIR=$HOME/.c9
 NPM=$C9_DIR/node/bin/npm
 NODE=$C9_DIR/node/bin/node
