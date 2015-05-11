@@ -135,7 +135,7 @@ start() {
     
     "base" )
       echo "Installing base packages. Use --help for more options"
-      start install node tmux_install nak ptyjs vfsextend collab
+      start install tmux_install nak ptyjs vfsextend collab
     ;;
     
     * )
